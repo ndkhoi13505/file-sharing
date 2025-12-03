@@ -10,7 +10,7 @@ import {
   TotpVerifyResponse, 
   TotpLoginRequest, 
   LoginSuccessResponse,
-  UserProfileResponse,
+  UserResponse,
   ChangePasswordRequest
 } from "../components/schemas";
 
@@ -30,7 +30,7 @@ export const loginTotp = (payload: TotpLoginRequest) =>
   authClient.post<LoginSuccessResponse>("/auth/login/totp", payload);
 
 export const getUserProfile = () => 
-  adminClient.get<UserProfileResponse>("/user");
+  adminClient.get<UserResponse>("/user");
 
 export const disableTotp = (code: string) =>
   adminClient.post<any>("/auth/totp/disable", { code });

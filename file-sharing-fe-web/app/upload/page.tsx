@@ -220,12 +220,45 @@ export default function UploadPage() {
 			return;
 		}
 
+		// Modern approach: Clipboard API (secure contexts only)
+		if (navigator.clipboard) {
+			try {
+				await navigator.clipboard.writeText(shareLink);
+				toast.success("Đã sao chép link chia sẻ.");
+				return;
+			} catch (err) {
+				console.error("Clipboard API writeText failed, falling back.", err);
+				// If it fails, we'll try the fallback method below.
+			}
+		}
+
+		// Fallback for older browsers or non-secure contexts (HTTP)
 		try {
-			await navigator.clipboard.writeText(shareLink);
-			toast.success("Đã sao chép link chia sẻ.");
-		} catch (error) {
-			console.error("Clipboard error", error);
-			toast.error("Không thể sao chép link, vui lòng thử thủ công.");
+			const textArea = document.createElement("textarea");
+			textArea.value = shareLink;
+			
+			// Make the textarea out of sight
+			textArea.style.position = "fixed";
+			textArea.style.top = "-9999px";
+			textArea.style.left = "-9999px";
+			
+			document.body.appendChild(textArea);
+			textArea.focus();
+			textArea.select();
+			
+			const successful = document.execCommand("copy");
+			
+			document.body.removeChild(textArea);
+			
+			if (successful) {
+				toast.success("Đã sao chép link chia sẻ.");
+			} else {
+				// This can happen if the user denies clipboard permissions.
+				throw new Error("Copy command was not successful.");
+			}
+		} catch (err) {
+			console.error("Fallback clipboard copy failed.", err);
+			toast.error("Không thể sao chép link. Vui lòng sao chép thủ công.");
 		}
 	};
 

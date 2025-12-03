@@ -9,72 +9,6 @@ info:
     - Bảo vệ bằng mật khẩu hoặc TOTP
     - Chia sẻ với danh sách người dùng cụ thể
     - Tự động xóa file hết hạn
-    - Password reset qua email
-    
-    ---
-    
-    ## 📧 Email Templates
-    
-    ### Password Reset Email Template
-    
-    **Subject:** Reset Your Password - File Sharing System
-    
-    **Body:**
-    ```
-    Hi {{username}},
-    
-    We received a request to reset your password for your File Sharing System account.
-    
-    Click the link below to reset your password:
-    {{resetLink}}
-    
-    This link will expire in 30 minutes for security reasons.
-    
-    If you didn't request a password reset, please ignore this email. 
-    Your password will remain unchanged.
-    
-    For security, never share this link with anyone.
-    
-    Best regards,
-    File Sharing System Team
-    ```
-    
-    **Variables:**
-    - `{{username}}`: User's username
-    - `{{resetLink}}`: Full reset URL with token (e.g., `https://yourdomain.com/reset-password?token={token}`)
-    - `{{expiryMinutes}}`: Token expiry time (default: 30 minutes)
-    
-    
-    ---
-    
-    ## 🔒 Security Best Practices
-    
-    ### Password Reset Token
-    - **Token generation:** Use `crypto.randomBytes(32).toString('hex')` hoặc UUID v4
-    - **Token length:** Tối thiểu 32 characters (64 hex chars recommended)
-    - **Expiry time:** 15-30 minutes (recommended: 30 minutes)
-    - **One-time use:** Token phải invalidate sau khi dùng
-    - **Rate limiting:** Giới hạn số lần request reset (e.g., 3 lần/giờ per email)
-    
-    ### Database Cleanup
-    - Tự động xóa expired tokens (cron job chạy mỗi giờ hoặc khi có request mới)
-    - Xóa used tokens sau 24h (optional, để audit nếu cần)
-    
-    ### Email Sending (Simple Setup cho Đồ Án)
-    - **Development/Demo:** Dùng **Nodemailer** với Gmail SMTP
-      ```javascript
-      // Example: nodemailer config
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          user: 'your-email@gmail.com',
-          pass: 'app-specific-password'  // Tạo trong Google Account Settings
-        }
-      });
-      ```
-    - **Alternative:** Mailtrap.io (free tier, test email không gửi thật)
-    - **Rate limit:** Không bắt buộc cho đồ án, nhưng nên có cơ bản (e.g., 5 emails/giờ)
-    - **Logging:** Console.log đơn giản là đủ (optional: lưu vào database)
   version: 1.0.0
   contact:
     name: API Support
@@ -130,7 +64,7 @@ paths:
                 value:
                   username: nam123
                   email: nam@example.com
-                  password: "123456"
+                  password: "passwordtest"
       responses:
         '200':
           description: Đăng ký thành công
@@ -405,399 +339,6 @@ paths:
                     error: Unauthorized
                     message: Invalid or expired access token
 
-  /auth/totp/disable:
-    post:
-      tags:
-        - Authentication
-      summary: Tắt TOTP/2FA
-      description: |
-        Tắt TOTP (2FA) cho tài khoản.
-        
-        **Yêu cầu:** 
-        - User phải đăng nhập (cần Bearer token)
-        - User phải có TOTP đã bật (`totpEnabled = true`)
-        - Phải xác minh mã TOTP hiện tại để xác nhận là chủ tài khoản
-        
-        **Luồng xử lý:**
-        1. User gọi endpoint này với Bearer token
-        2. Nhập mã TOTP 6 số từ Google Authenticator
-        3. Backend verify mã TOTP đúng → tắt 2FA (`totpEnabled = false`, xóa `totpSecret`)
-        
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                code:
-                  type: string
-                  pattern: '^\d{6}$'
-                  description: Mã TOTP 6 chữ số từ app authenticator
-                  example: "123456"
-              required:
-                - code
-      responses:
-        '200':
-          description: TOTP đã được tắt thành công
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: TOTP disabled successfully
-                  totpEnabled:
-                    type: boolean
-                    example: false
-        '400':
-          description: Mã TOTP không hợp lệ hoặc TOTP chưa được bật
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                invalidCode:
-                  summary: Mã TOTP không đúng
-                  value:
-                    error: Invalid TOTP code
-                    message: The provided code is incorrect or expired
-                totpNotEnabled:
-                  summary: TOTP chưa được bật
-                  value:
-                    error: TOTP not enabled
-                    message: TOTP is not enabled for this account
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/password/change:
-    post:
-      tags:
-        - Authentication
-      summary: Đổi mật khẩu
-      description: |
-        Đổi mật khẩu cho user đã đăng nhập.
-        
-        **Yêu cầu:** User phải đăng nhập (cần Bearer token)
-        
-        **Hai cách xác thực:**
-        1. **Có password cũ:** Nhập `oldPassword` + `newPassword`
-        2. **Quên password cũ nhưng có TOTP:** Nhập `totpCode` + `newPassword` (chỉ cho account đã bật 2FA)
-        
-        **Validation:**
-        - `newPassword` phải >= 6 ký tự (theo system policy)
-        - `newPassword` phải khác `oldPassword`
-        - Phải có ít nhất một trong hai: `oldPassword` hoặc `totpCode`
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                oldPassword:
-                  type: string
-                  format: password
-                  description: Mật khẩu hiện tại (bắt buộc nếu không có totpCode)
-                  example: "oldpass123"
-                totpCode:
-                  type: string
-                  pattern: '^\d{6}$'
-                  description: Mã TOTP 6 chữ số (bắt buộc nếu không có oldPassword, chỉ dùng khi account đã bật 2FA)
-                  example: "123456"
-                newPassword:
-                  type: string
-                  format: password
-                  minLength: 6
-                  description: Mật khẩu mới (tối thiểu 6 ký tự)
-                  example: "newpass456"
-              required:
-                - newPassword
-            examples:
-              withOldPassword:
-                summary: Đổi password bằng password cũ
-                value:
-                  oldPassword: "oldpass123"
-                  newPassword: "newpass456"
-              withTOTP:
-                summary: Đổi password bằng TOTP (quên password cũ)
-                value:
-                  totpCode: "123456"
-                  newPassword: "newpass456"
-      responses:
-        '200':
-          description: Đổi mật khẩu thành công
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Password changed successfully
-        '400':
-          description: Validation error hoặc thiếu thông tin xác thực
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                missingAuth:
-                  summary: Thiếu oldPassword và totpCode
-                  value:
-                    error: Validation error
-                    message: Either oldPassword or totpCode is required
-                invalidOldPassword:
-                  summary: Sai password cũ
-                  value:
-                    error: Invalid password
-                    message: The old password is incorrect
-                invalidTOTP:
-                  summary: Sai mã TOTP
-                  value:
-                    error: Invalid TOTP code
-                    message: The provided TOTP code is incorrect or expired
-                totpNotEnabled:
-                  summary: Account không có TOTP nhưng gửi totpCode
-                  value:
-                    error: TOTP not enabled
-                    message: This account does not have TOTP enabled. Please use oldPassword instead
-                weakPassword:
-                  summary: Password mới quá yếu
-                  value:
-                    error: Validation error
-                    message: New password must be at least 6 characters
-                samePassword:
-                  summary: Password mới trùng password cũ
-                  value:
-                    error: Validation error
-                    message: New password must be different from the old password
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/password/forgot:
-    post:
-      tags:
-        - Authentication
-      summary: Yêu cầu reset mật khẩu
-      description: |
-        Gửi yêu cầu reset mật khẩu khi user quên password.
-        
-        
-        1. **User nhập email** → gọi endpoint này
-        2. **Backend xử lý:**
-           - Kiểm tra email có tồn tại không
-           - **Nếu account có TOTP enabled:** trả về `requireTOTP: true` → user phải dùng TOTP để reset
-           - **Nếu account không có TOTP:**
-             - Tạo reset token (random, secure, one-time use)
-             - Lưu vào database với expiry time (thường 15-30 phút)
-             - Gửi email chứa reset link: `https://yourdomain.com/reset-password?token={resetToken}`
-        3. **User click link trong email** → Frontend navigate đến page reset password với token trong URL
-        4. **User nhập password mới** → gọi `/auth/password/reset` với token + newPassword
-        
-        **Security Best Practices:**
-        - Token phải random, unpredictable (sử dụng crypto.randomBytes hoặc uuid)
-        - Token chỉ dùng được 1 lần (one-time use)
-        - Token có expiry time (15-30 phút)
-        - Endpoint luôn trả 200 OK (ngay cả khi email không tồn tại) để tránh enumerate users
-        - Email phải chứa warning: "Nếu bạn không yêu cầu reset password, hãy bỏ qua email này"
-
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
-                  description: Email của tài khoản cần reset password
-                  example: nam@example.com
-              required:
-                - email
-      responses:
-        '200':
-          description: Yêu cầu đã được xử lý
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - type: object
-                    properties:
-                      message:
-                        type: string
-                        example: If the email exists, you will receive a password reset link
-                  - type: object
-                    properties:
-                      requireTOTP:
-                        type: boolean
-                        example: true
-                      message:
-                        type: string
-                        example: This account has TOTP enabled. Please provide the TOTP code to reset password
-              examples:
-                noTOTP:
-                  summary: Account không có TOTP (gửi email reset)
-                  value:
-                    message: If the email exists, you will receive a password reset link
-                withTOTP:
-                  summary: Account có TOTP (yêu cầu mã TOTP)
-                  value:
-                    requireTOTP: true
-                    message: This account has TOTP enabled. Please provide the TOTP code to reset password
-        '400':
-          description: Email không hợp lệ
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                invalidEmail:
-                  summary: Email không đúng định dạng
-                  value:
-                    error: Validation error
-                    message: Invalid email format
-
-  /auth/password/reset:
-    post:
-      tags:
-        - Authentication
-      summary: Reset mật khẩu
-      description: |
-        Reset mật khẩu sau khi gọi `/auth/password/forgot`.
-        
-        **Hai luồng xử lý:**
-        
-        ### Account có TOTP enabled (2FA):
-        - User gọi `/auth/password/forgot` → nhận `requireTOTP: true`
-        - User gọi endpoint này với: `email` + `totpCode` + `newPassword`
-        - Backend verify mã TOTP → reset password
-        
-        ### Account không có TOTP (standard flow):
-        - User gọi `/auth/password/forgot` → nhận email chứa reset link
-        - User click link → Frontend gọi endpoint này với: `resetToken` + `newPassword`
-        - Backend kiểm tra token (valid, chưa dùng, chưa hết hạn) → reset password → đánh dấu token đã dùng
-        
-        **Security Notes:**
-        - Reset token chỉ dùng được 1 lần (one-time use)
-        - Sau khi reset thành công, token bị invalidate ngay
-        - Token có expiry time (15-30 phút)
-        - Không được reuse token đã dùng
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                email:
-                  type: string
-                  format: email
-                  description: Email tài khoản (bắt buộc khi dùng TOTP)
-                  example: nam@example.com
-                totpCode:
-                  type: string
-                  pattern: '^\d{6}$'
-                  description: Mã TOTP 6 chữ số (cho account có 2FA)
-                  example: "123456"
-                resetToken:
-                  type: string
-                  description: Token từ email reset link (cho account không có TOTP)
-                  example: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
-                newPassword:
-                  type: string
-                  format: password
-                  minLength: 6
-                  description: Mật khẩu mới (tối thiểu 6 ký tự)
-                  example: "newpass789"
-              required:
-                - newPassword
-            examples:
-              withTOTP:
-                summary: Reset password bằng TOTP (account có 2FA)
-                value:
-                  email: nam@example.com
-                  totpCode: "123456"
-                  newPassword: "newpass789"
-              withResetToken:
-                summary: Reset password bằng token từ email
-                value:
-                  resetToken: "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6"
-                  newPassword: "newpass789"
-      responses:
-        '200':
-          description: Reset password thành công
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Password reset successfully. You can now login with your new password
-              examples:
-                success:
-                  summary: Password đã được reset
-                  value:
-                    message: Password reset successfully. You can now login with your new password
-        '400':
-          description: Validation error hoặc token không hợp lệ
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                invalidTOTP:
-                  summary: Sai mã TOTP
-                  value:
-                    error: Invalid TOTP code
-                    message: The provided TOTP code is incorrect or expired
-                invalidResetToken:
-                  summary: Token reset không hợp lệ
-                  value:
-                    error: Invalid reset token
-                    message: The reset token is invalid or does not exist
-                expiredToken:
-                  summary: Token đã hết hạn
-                  value:
-                    error: Reset token expired
-                    message: This reset link has expired. Please request a new one
-                usedToken:
-                  summary: Token đã được sử dụng
-                  value:
-                    error: Reset token already used
-                    message: This reset link has already been used. Please request a new one if needed
-                missingAuth:
-                  summary: Thiếu totpCode hoặc resetToken
-                  value:
-                    error: Validation error
-                    message: Either totpCode (with email) or resetToken is required
-                weakPassword:
-                  summary: Password mới quá yếu
-                  value:
-                    error: Validation error
-                    message: New password must be at least 6 characters
-        '404':
-          description: Email không tồn tại (chỉ cho flow TOTP)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                notFound:
-                  summary: Email không tồn tại
-                  value:
-                    error: Not found
-                    message: Email not found
-
   /auth/logout:
     post:
       tags:
@@ -820,14 +361,137 @@ paths:
     get:
       tags:
         - Authentication
-      summary: Lấy thông tin user và danh sách file
+      summary: Lấy thông tin profile của user hiện tại
       description: |
-        Lấy thông tin profile của user hiện tại (đã đăng nhập) và danh sách tất cả file đã upload.
+        Trả về thông tin profile của user hiện tại (id, username, email, role, totpEnabled, TOTP status, ...).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Thông tin user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfileResponse'
+              examples:
+                success:
+                  summary: Thông tin user
+                  value:
+                    user:
+                      id: 550e8400-e29b-41d4-a716-446655440000
+                      username: nam123
+                      email: nam@example.com
+                      role: user
+                      totpEnabled: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /files/upload:
+    post:
+      tags:
+        - Files
+      summary: Upload file
+      description: |
+        Upload file mới và tạo share link.
+        Authorization header là optional - nếu không có thì anonymous upload (chỉ upload được file public).
+        
+        **Lưu ý:**
+        - Các cấu hình private (`isPublic = false`, dùng whitelist `sharedWith`, password nâng cao) yêu cầu Bearer token để hệ thống gắn owner.
+        - Anonymous upload luôn `isPublic = true` và không thể chỉnh sửa/xóa file sau khi upload.
+        - Thời gian hiệu lực được validate theo system policy: `availableFrom` phải nhỏ hơn hoặc bằng `availableTo`, `availableTo` không được nằm trong quá khứ và tổng thời gian hiệu lực không vượt quá `maxValidityDays`. Nếu bỏ trống, backend tự áp dụng logic mặc định (FROM+TO/Chỉ FROM/Chỉ TO/Không có) như mô tả ở phần Validity Period.
+      security:
+        - BearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FileUploadRequest'
+      responses:
+        '201':
+          description: Upload thành công
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileUploadResponse'
+              examples:
+                success:
+                  summary: Upload thành công
+                  value:
+                    success: true
+                    message: File uploaded successfully
+                    file:
+                      id: 550e8400-e29b-41d4-a716-446655440000
+                      fileName: report.pdf
+                      shareToken: a1b2c3d4e5f6g7h8
+                    totpSetup:
+                      secret: NB2W45DFOIZA====
+                      qrCode: data:image/png;base64,iVBORw0KGgo...
+        '400':
+          description: Thiếu file hoặc vi phạm validation (password quá ngắn, cấu hình thời gian không hợp lệ, ... )
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingFile:
+                  summary: Không gửi file trong form-data
+                  value:
+                    error: Validation error
+                    message: File is required
+                weakPassword:
+                  summary: Password < 8 ký tự
+                  value:
+                    error: Validation error
+                    message: Password must have at least 8 characters
+                invalidValidityRange:
+                  summary: Thời gian hiệu lực không hợp lệ
+                  value:
+                    error: Validation error
+                    message: availableFrom must be before availableTo and within allowed policy window
+        '401':
+          description: Thiếu hoặc sai Bearer token (khi upload với quyền riêng tư)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingToken:
+                  summary: Thiếu Authorization header
+                  value:
+                    error: Unauthorized
+                    message: Bearer token is required for authenticated uploads
+                privateRequiresAuth:
+                  summary: Anonymous không thể upload private
+                  value:
+                    error: Unauthorized
+                    message: Private uploads (isPublic=false/sharedWith) require authentication
+        '413':
+          description: File quá lớn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                fileTooLarge:
+                  summary: File vượt quá giới hạn
+                  value:
+                    error: Payload too large
+                    message: File size exceeds the system limit
+
+  /files/my:
+    get:
+      tags:
+        - Files
+      summary: Lấy danh sách file của user hiện tại
+      description: |
+        Trả về danh sách file do user hiện tại upload (đã đăng nhập).
         
         **Bao gồm:**
-        - Thông tin user: id, username, email, role, totpEnabled
-        - Danh sách file: active, expired, pending, deleted
-        - Pagination và summary statistics
+        - Danh sách file kèm metadata (status, thời gian hiệu lực, bảo mật, ...)
+        - Pagination (`page`, `limit`) và tổng số file
+        - Summary (đếm active/pending/expired/deleted)
       security:
         - BearerAuth: []
       parameters:
@@ -869,21 +533,15 @@ paths:
             default: desc
       responses:
         '200':
-          description: Thông tin user và danh sách file
+          description: Danh sách file của user hiện tại
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserProfileResponse'
+                $ref: '#/components/schemas/UserFilesResponse'
               examples:
                 success:
-                  summary: Thông tin user và file
+                  summary: Danh sách file + pagination
                   value:
-                    user:
-                      id: 550e8400-e29b-41d4-a716-446655440000
-                      username: nam123
-                      email: nam@example.com
-                      role: user
-                      totpEnabled: true
                     files:
                       - id: 550e8400-e29b-41d4-a716-446655440001
                         fileName: document.pdf
@@ -906,86 +564,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /files/upload:
-    post:
-      tags:
-        - Files
-      summary: Upload file
-      description: |
-        Upload file mới và tạo share link.
-        Authorization header là optional - nếu không có thì anonymous upload.
-      security:
-        - BearerAuth: []
-        - {}
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/FileUploadRequest'
-      responses:
-        '201':
-          description: Upload thành công
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FileUploadResponse'
-              examples:
-                success:
-                  summary: Upload thành công
-                  value:
-                    success: true
-                    message: File uploaded successfully
-                    file:
-                      id: 550e8400-e29b-41d4-a716-446655440000
-                      fileName: report.pdf
-                      shareToken: a1b2c3d4e5f6g7h8
-                    totpSetup:
-                      secret: NB2W45DFOIZA====
-                      qrCode: data:image/png;base64,iVBORw0KGgo...
-        '400':
-          description: Thiếu file hoặc vi phạm validation (password quá ngắn, availableTo < availableFrom, ... )
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                missingFile:
-                  summary: Không gửi file trong form-data
-                  value:
-                    error: Validation error
-                    message: File is required
-                weakPassword:
-                  summary: Password < 6 ký tự
-                  value:
-                    error: Validation error
-                    message: Password must have at least 6 characters
-        '401':
-          description: Thiếu hoặc sai Bearer token (khi upload với quyền riêng tư)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                missingToken:
-                  summary: Thiếu Authorization header
-                  value:
-                    error: Unauthorized
-                    message: Bearer token is required for authenticated uploads
-        '413':
-          description: File quá lớn
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                fileTooLarge:
-                  summary: File vượt quá giới hạn
-                  value:
-                    error: Payload too large
-                    message: File size exceeds the system limit
-
-  /files/{id}:
+  /files/info/{id}:
     get:
       tags:
         - Files
@@ -1074,8 +653,13 @@ paths:
         - Files
       summary: Xóa file
       description: |
-        Xóa file (chỉ owner).
-        Anonymous upload KHÔNG THỂ xóa file sau khi upload.
+        Xóa file theo UUID (chỉ owner hoặc admin).
+        
+        **Quyền truy cập:**
+        - Chỉ owner của file hoặc admin mới có thể xóa
+        - Anonymous uploads (file không có owner) **KHÔNG THỂ** xóa file sau khi upload
+      security:
+        - BearerAuth: []
       parameters:
         - name: id
           in: path
@@ -1084,6 +668,7 @@ paths:
           schema:
             type: string
             format: uuid
+            example: 550e8400-e29b-41d4-a716-446655440000
       responses:
         '200':
           description: Xóa thành công
@@ -1094,21 +679,36 @@ paths:
                 properties:
                   message:
                     type: string
+                    example: File deleted successfully
                   fileId:
                     type: string
                     format: uuid
+                    example: 550e8400-e29b-41d4-a716-446655440000
               examples:
                 success:
                   summary: Xóa thành công
                   value:
                     message: File deleted successfully
                     fileId: 550e8400-e29b-41d4-a716-446655440000
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           description: Không phải owner hoặc anonymous upload
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+              examples:
+                notOwner:
+                  summary: Không phải owner
+                  value:
+                    error: Forbidden
+                    message: You don't have permission to delete this file
+                anonymousUpload:
+                  summary: Anonymous upload không thể xóa
+                  value:
+                    error: Forbidden
+                    message: Anonymous uploads cannot be deleted
         '404':
           description: Không tìm thấy file với id
           content:
@@ -1122,7 +722,7 @@ paths:
                     error: Not found
                     message: File not found
 
-  /files/{id}/stats:
+  /files/stats/{id}:
     get:
       tags:
         - Files
@@ -1232,7 +832,7 @@ paths:
                     error: Not found
                     message: File not found or statistics not available (anonymous upload)
 
-  /files/{id}/download-history:
+  /files/download-history/{id}:
     get:
       tags:
         - Files
@@ -1246,6 +846,10 @@ paths:
         - Người download (username/email hoặc "Anonymous")
         - Thời điểm download
         - Trạng thái (completed/interrupted)
+        
+        **Quyền riêng tư:**
+        - Với anonymous download, hệ thống chỉ ghi nhận một bản ghi mang nhãn "Anonymous" cùng timestamp và trạng thái; **không log IP/User-Agent hoặc fingerprint**.
+        - Thông tin cá nhân (username/email) chỉ xuất hiện khi người tải đăng nhập và đồng ý với điều khoản sử dụng.
         
         **Pagination:** Hỗ trợ phân trang với `page` và `limit`
       security:
@@ -1304,7 +908,7 @@ paths:
                             email:
                               type: string
                               nullable: true
-                          description: Null nếu là anonymous download
+                          description: Null nếu là anonymous download (chỉ ghi nhận "Anonymous" + timestamp, không lưu IP/User-Agent)
                         downloadedAt:
                           type: string
                           format: date-time
@@ -1382,7 +986,11 @@ paths:
       tags:
         - Files
       summary: Lấy thông tin file
-      description: Lấy metadata của file qua share token
+      description: |
+        Lấy metadata cơ bản của file qua share token (public endpoint, không cần authentication).
+        
+        **Response chỉ trả về thông tin cơ bản:**
+        - `id`, `fileName`, `shareToken`, `status`, `isPublic`, `hasPassword`
       security: []
       parameters:
         - $ref: '#/components/parameters/ShareToken'
@@ -1395,7 +1003,7 @@ paths:
                 $ref: '#/components/schemas/FileInfoResponse'
               examples:
                 success:
-                  summary: Trả về metadata
+                  summary: Trả về metadata cơ bản (public)
                   value:
                     file:
                       id: 550e8400-e29b-41d4-a716-446655440000
@@ -1403,6 +1011,17 @@ paths:
                       shareToken: a1b2c3d4e5f6g7h8
                       status: active
                       isPublic: false
+                      hasPassword: true
+                noPassword:
+                  summary: File không có password
+                  value:
+                    file:
+                      id: 550e8400-e29b-41d4-a716-446655440001
+                      fileName: document.pdf
+                      shareToken: b2c3d4e5f6g7h8i9
+                      status: active
+                      isPublic: true
+                      hasPassword: false
         '404':
           description: Không tìm thấy file với shareToken
           content:
@@ -1426,7 +1045,7 @@ paths:
                   summary: File hết hạn
                   value:
                     error: File expired
-                    message: File expired. You cannot validate TOTP anymore.
+                    message: File has expired
 
   /files/{shareToken}/download:
     get:
@@ -1434,20 +1053,22 @@ paths:
         - Files
       summary: Tải file về
       description: |
-        Download file. File có thể có nhiều lớp bảo mật cùng lúc (password + whitelist + TOTP).
+        Download file. File có thể có nhiều lớp bảo mật cùng lúc (password + whitelist).
         
         **Thứ tự kiểm tra bảo mật (theo best practice):**
         1. **File status** - Kiểm tra file còn hiệu lực (expired/pending) → 410/423
         2. **Whitelist** - Nếu file có `sharedWith` list → yêu cầu Bearer token, verify user email ∈ whitelist → 403 nếu không có quyền
         3. **Password** - Nếu file có password → yêu cầu query parameter `password` → 403 nếu sai/thiếu
-        4. **TOTP** - Nếu file có `totpEnabled=true` → yêu cầu `downloadToken` từ `/files/{shareToken}/totp/validate` → 400 nếu thiếu/sai/hết hạn
-        
-        **Luồng download với TOTP:**
-        1. User gọi `/files/{shareToken}/totp/validate` với mã TOTP từ owner
-        2. Backend trả về `downloadToken` tạm thời (valid 5 phút)
-        3. User gọi endpoint này với `downloadToken` trong query parameter
         
         **Lưu ý:** Tất cả các lớp bảo mật phải pass thì mới được download. Bất kỳ lớp nào fail sẽ trả error tương ứng.
+        
+        **Owner preview trong giai đoạn pending:**
+        - Nếu requester là owner (JWT hợp lệ, `sub` trùng `file.owner.id`), hệ thống cho phép bypass trạng thái `pending` để chủ file có thể kiểm thử trước khi tới giờ.
+        - Tất cả user khác vẫn nhận 423 "File not yet available" cho tới khi `availableFrom` đến.
+        
+        **Notification khi file chuyển trạng thái:**
+        - Khuyến nghị cấu hình cronjob/background task gửi email/SMS/webhook khi file chuyển từ `pending` sang `active` để owner và whitelist nhận thông báo.
+        - Endpoint này không tự gửi notification; cần bật tính năng ở backend hoặc job scheduler (xem mục Appendices/Future Enhancements).
       security:
         - BearerAuth: []
         - {}
@@ -1458,12 +1079,6 @@ paths:
           description: Mật khẩu bảo vệ (nếu file có password)
           schema:
             type: string
-        - name: downloadToken
-          in: query
-          description: Token tạm thời từ TOTP validation (nếu file có TOTP enabled)
-          schema:
-            type: string
-            example: dt_a1b2c3d4e5f6g7h8
       responses:
         '200':
           description: File binary
@@ -1480,23 +1095,6 @@ paths:
             Content-Length:
               schema:
                 type: integer
-        '400':
-          description: Download token không hợp lệ hoặc thiếu (khi file có TOTP enabled)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                missingDownloadToken:
-                  summary: Thiếu download token (file có TOTP)
-                  value:
-                    error: Download token required
-                    message: This file requires TOTP verification. Please call /files/{shareToken}/totp/validate first
-                invalidDownloadToken:
-                  summary: Download token không hợp lệ hoặc hết hạn
-                  value:
-                    error: Invalid download token
-                    message: The download token is invalid or expired. Please request a new token
         '401':
           description: Thiếu Bearer token khi file có whitelist (sharedWith)
           content:
@@ -1532,7 +1130,7 @@ paths:
                     error: Access denied
                     message: You are not allowed to download this file. Your email is not in the shared list
         '404':
-          description: Không tìm thấy file hoặc downloadToken không đúng shareToken
+          description: Không tìm thấy file
           content:
             application/json:
               schema:
@@ -1583,119 +1181,6 @@ paths:
                     availableFrom: "2025-11-20T10:00:00Z"
                     hoursUntilAvailable: 6
 
-  /files/{shareToken}/totp/validate:
-    post:
-      tags:
-        - Files
-      summary: Xác thực mã TOTP để download file
-      description: |
-        Gọi endpoint này trước khi download file có TOTP enabled để lấy `downloadToken`.
-        
-        **Thứ tự kiểm tra:**
-        1. File status (expired/pending) → 410/423
-        2. File có TOTP enabled? → 400 nếu không
-        3. Mã TOTP đúng? → 400 nếu sai
-        4. File có password? → verify password trong request body → 400 nếu sai/thiếu
-        5. Tất cả pass → trả `downloadToken` (valid 5 phút)
-        
-        **Luồng download file có TOTP:**
-        1. Owner upload file với `enableTOTP=true` → nhận secret + QR code → quét vào Google Authenticator
-        2. User truy cập `/files/{shareToken}` để xem thông tin file
-        3. Nếu `file.totpEnabled = true`, UI yêu cầu nhập mã TOTP (và password nếu có)
-        4. User liên hệ owner (điện thoại, chat, meeting,...) để lấy mã 6 số hiện tại từ Google Authenticator
-        5. User gọi endpoint này với mã TOTP (và password nếu file có password)
-        6. Backend trả về `downloadToken` tạm thời (valid 5 phút)
-        7. User gọi `/files/{shareToken}/download?downloadToken=xxx` để tải file
-        
-        **Lưu ý:** 
-        - Nếu file có password, phải gửi `password` trong request body cùng với mã TOTP
-        - Không cần Bearer token vì đây là luồng download công khai (chỉ cần TOTP từ owner)
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/ShareToken'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                code:
-                  type: string
-                  pattern: '^\d{6}$'
-                  description: Mã TOTP 6 chữ số do owner cung cấp
-                  example: "123456"
-                password:
-                  type: string
-                  description: Mật khẩu file (nếu file có password)
-                  example: "mypassword123"
-              required:
-                - code
-      responses:
-        '200':
-          description: Xác thực TOTP thành công
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: TOTP validated successfully
-                  downloadToken:
-                    type: string
-                    description: Token tạm thời để download (valid 5 phút)
-                    example: dt_a1b2c3d4e5f6g7h8
-                  expiresIn:
-                    type: integer
-                    description: Thời gian hết hạn token (giây)
-                    example: 300
-        '400':
-          description: Mã TOTP không hợp lệ, sai password, hoặc file không có TOTP enabled
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                invalidTOTPCode:
-                  summary: Mã TOTP không đúng hoặc đã hết hạn
-                  value:
-                    error: Invalid TOTP code
-                    message: The provided TOTP code is incorrect or expired. Please get the current code from the file owner
-                wrongPassword:
-                  summary: Sai password (nếu file có password)
-                  value:
-                    error: Incorrect password
-                    message: The file password is incorrect
-                missingPassword:
-                  summary: Thiếu password (file có password)
-                  value:
-                    error: Password required
-                    message: This file is password-protected. Please provide the password in the request body
-                totpNotEnabled:
-                  summary: File không có TOTP enabled
-                  value:
-                    error: TOTP not enabled
-                    message: This file does not have TOTP protection enabled
-        '404':
-          description: Share token không tồn tại
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                notFound:
-                  summary: Token sai
-                  value:
-                    error: Not found
-                    message: File not found
-        '410':
-          description: File đã hết hạn
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
   /admin/cleanup:
     post:
       tags:
@@ -1704,6 +1189,12 @@ paths:
       description: |
         Xóa file hết hạn (Cron job hoặc Admin endpoint).
         Yêu cầu X-Cron-Secret header hoặc admin token.
+        
+        **Security best practices:**
+        - `X-Cron-Secret` phải được lưu trong môi trường bảo mật, hỗ trợ rotation định kỳ (ví dụ đổi secret hàng tuần/tháng).
+        - Nên triển khai rate limiting/IP allowlist để tránh bị spam cleanup (DOS).
+        - Mọi request tới endpoint này cần được log đầy đủ (timestamp, source, kết quả) để audit.
+        - Khuyến nghị triển khai song song xác thực bằng JWT admin đối với các tác vụ thủ công; secret chủ yếu dành cho job nội bộ.
       security:
         - BearerAuth: []
         - CronSecret: []
@@ -1763,6 +1254,18 @@ paths:
                   value:
                     error: Forbidden
                     message: Invalid cron secret
+        '429':
+          description: Vượt quá giới hạn gọi cleanup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                rateLimited:
+                  summary: Cleanup bị giới hạn tần suất
+                  value:
+                    error: Too many requests
+                    message: Cleanup endpoint is rate limited. Please try again later.
 
   /admin/policy:
     get:
@@ -1786,7 +1289,7 @@ paths:
                     minValidityHours: 1
                     maxValidityDays: 30
                     defaultValidityDays: 7
-                    requirePasswordMinLength: 6
+                    requirePasswordMinLength: 8
         '401':
           description: Thiếu hoặc sai Bearer token
           content:
@@ -1896,7 +1399,11 @@ components:
       type: apiKey
       in: header
       name: X-Cron-Secret
-      description: Secret key cho cron job
+      description: |
+        Secret key cho cron job (lưu trong env, không commit vào repo).
+        - Nên thiết lập cơ chế rotation cố định (ví dụ đổi secret 30/60 ngày một lần hoặc khi có sự cố).
+        - Việc rotation gồm: tạo secret mới, cập nhật vào store an toàn (secret manager/CI), redeploy cron job, vô hiệu hóa secret cũ.
+        - Ghi log thời điểm tạo/thu hồi secret để phục vụ audit.
 
   parameters:
     ShareToken:
@@ -1928,9 +1435,9 @@ components:
         password:
           type: string
           format: password
-          minLength: 6
-          description: Mật khẩu (tối thiểu 6 ký tự)
-          example: "123456"
+          minLength: 8
+          description: Mật khẩu (tối thiểu 8 ký tự)
+          example: "Passw0rd"
 
     RegisterResponse:
       type: object
@@ -1956,7 +1463,7 @@ components:
         password:
           type: string
           format: password
-          example: "123456"
+          example: "Passw0rd"
 
     LoginResponse:
       type: object
@@ -2020,34 +1527,38 @@ components:
         isPublic:
           type: boolean
           default: true
-          description: File public hay private
+          description: File public hay private (upload ẩn danh luôn = true)
         password:
           type: string
-          minLength: 6
-          description: Mật khẩu bảo vệ (min 6 ký tự)
+          minLength: 8
+          description: Mật khẩu bảo vệ (min 8 ký tự)
         availableFrom:
           type: string
           format: date-time
-          description: Thời điểm bắt đầu hiệu lực
+          description: |
+            Thời điểm bắt đầu hiệu lực (không được lớn hơn `availableTo` và không vượt quá khoảng thời gian cho phép trong `system_policy.maxValidityDays`).
+            
+            **Mặc định:** Nếu cả `availableFrom` và `availableTo` đều null, hệ thống tự động set:
+            - `availableFrom` = thời điểm hiện tại
+            - `availableTo` = thời điểm hiện tại + 7 ngày (default_validity_days)
           example: "2025-11-10T00:00:00Z"
         availableTo:
           type: string
           format: date-time
-          description: Thời điểm kết thúc hiệu lực
+          description: |
+            Thời điểm kết thúc hiệu lực (không nằm trong quá khứ, phải lớn hơn `availableFrom` và nhỏ hơn giới hạn `maxValidityDays`).
+            
+            **Mặc định:** Nếu cả `availableFrom` và `availableTo` đều null, hệ thống tự động set:
+            - `availableFrom` = thời điểm hiện tại
+            - `availableTo` = thời điểm hiện tại + 7 ngày (default_validity_days)
           example: "2025-11-17T00:00:00Z"
         sharedWith:
           type: array
           items:
             type: string
             format: email
-          description: Danh sách email được phép tải
+          description: Danh sách email được phép tải (yêu cầu authenticated upload)
           example: ["user1@example.com", "user2@example.com"]
-        enableTOTP:
-          type: boolean
-          default: false
-          description: |
-            Bật TOTP cho file. Nếu true, backend sẽ sinh secret + QR code trong response.
-            Owner quét QR vào Google Authenticator để lấy mã TOTP cung cấp cho người download.
 
     FileUploadResponse:
       type: object
@@ -2057,18 +1568,6 @@ components:
           example: true
         file:
           $ref: '#/components/schemas/File'
-        totpSetup:
-          type: object
-          description: Chỉ có khi upload với enableTOTP=true
-          properties:
-            secret:
-              type: string
-              description: TOTP secret để add vào Google Authenticator
-              example: NB2W45DFOIZA====
-            qrCode:
-              type: string
-              description: QR code dạng base64 để quét
-              example: data:image/png;base64,iVBORw0KGgo...
         message:
           type: string
           example: File uploaded successfully
@@ -2132,10 +1631,6 @@ components:
             type: string
             format: email
           example: ["user1@example.com", "user2@example.com"]
-        totpEnabled:
-          type: boolean
-          description: File có bật TOTP hay không (được set khi upload với enableTOTP=true)
-          example: false
         owner:
           $ref: '#/components/schemas/User'
         createdAt:
@@ -2151,10 +1646,15 @@ components:
 
     UserProfileResponse:
       type: object
-      description: Response cho GET /user - bao gồm thông tin user và danh sách file
+      description: Response cho GET /user - thông tin profile
       properties:
         user:
           $ref: '#/components/schemas/User'
+
+    UserFilesResponse:
+      type: object
+      description: Response cho GET /files/my - danh sách file của user hiện tại
+      properties:
         files:
           type: array
           items:
@@ -2215,7 +1715,7 @@ components:
           example: 7
         requirePasswordMinLength:
           type: integer
-          example: 6
+          example: 8
 
     SystemPolicyUpdate:
       type: object

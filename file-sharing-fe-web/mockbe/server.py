@@ -11,7 +11,7 @@ app = Flask(__name__)
 # cors for localhost:3000 make request
 CORS(
     app,
-    resources={r"/api/*": {"origins": "http://localhost:3000"}},
+    resources={r"/api/*": {"origins": "*"}},
     supports_credentials=True,
 )
 
@@ -110,7 +110,7 @@ def get_file_status(file_meta: dict) -> str:
     """
     Determines the status of a file based on its availableFrom and availableTo dates.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     available_from_str = file_meta.get("availableFrom")
     available_to_str = file_meta.get("availableTo")
 
@@ -406,6 +406,97 @@ def change_password():
     
     return jsonify({"message": "Password changed successfully"}), 200
 
+@app.get("/api/files/my")
+def get_user_files():
+    token, user = get_current_user()
+    if not user:
+        return jsonify({"message": "Unauthorized"}), 401
+
+    user_email = user["email"]
+
+    # Get query params from request
+    status_filter = request.args.get("status", "all")
+    page = int(request.args.get("page", 1))
+    limit = int(request.args.get("limit", 20))
+    sort_by = request.args.get("sortBy", "createdAt")
+    order = request.args.get("order", "desc")
+
+    # In a real app, this would be a database query. Here, we filter the in-memory dict.
+    user_files_with_status = [
+        (file_meta, get_file_status(file_meta))
+        for file_meta in files.values()
+        if file_meta.get("ownerEmail") == user_email
+    ]
+
+    # Filter by status
+    if status_filter != "all":
+        user_files_with_status = [
+            (file, status) for file, status in user_files_with_status if status == status_filter
+        ]
+
+    # Sort files
+    reverse_order = order == "desc"
+    if sort_by == "fileName":
+        user_files_with_status.sort(
+            key=lambda item: item[0].get("filename", "").lower(), reverse=reverse_order
+        )
+    else:  # Default to sorting by createdAt
+        user_files_with_status.sort(
+            key=lambda item: item[0]["createdAt"], reverse=reverse_order
+        )
+
+    # Paginate files
+    total_files = len(user_files_with_status)
+    start_index = (page - 1) * limit
+    end_index = start_index + limit
+    paginated_files_with_status = user_files_with_status[start_index:end_index]
+
+    # Process files and calculate summary
+    serialized_files = []
+    summary = {
+        "activeFiles": 0,
+        "pendingFiles": 0,
+        "expiredFiles": 0,
+        "deletedFiles": 0,
+    }
+
+    # Calculate summary based on all user files (pre-pagination)
+    for _, status in user_files_with_status:
+        if status == "active":
+            summary["activeFiles"] += 1
+        elif status == "pending":
+            summary["pendingFiles"] += 1
+        elif status == "expired":
+            summary["expiredFiles"] += 1
+
+    # Serialize only the paginated files
+    for file_meta, status in paginated_files_with_status:
+        serialized_files.append(
+            {
+                "id": file_meta["id"],
+                "fileName": file_meta.get("filename", "N/A"),
+                "status": status,
+                "createdAt": file_meta["createdAt"],
+                "shareToken": file_meta.get("shareToken"),
+            }
+        )
+
+    # Mock pagination
+    total_pages = (total_files + limit - 1) // limit
+    pagination = {
+        "currentPage": page,
+        "totalPages": total_pages,
+        "totalFiles": total_files,
+        "limit": limit,
+    }
+
+    return jsonify(
+        {
+            "files": serialized_files,
+            "pagination": pagination,
+            "summary": summary,
+        }
+    ), 200
 
 @app.get("/api/user")
 def get_user_profile():
@@ -418,60 +509,9 @@ def get_user_profile():
     if not user:
         return jsonify({"message": "Unauthorized"}), 401
 
-    user_email = user["email"]
-
-    # In a real app, this would be a database query. Here, we filter the in-memory dict.
-    user_files = [
-        file_meta
-        for file_meta in files.values()
-        if file_meta.get("ownerEmail") == user_email
-    ]
-
-    # Process files and calculate summary
-    serialized_files = []
-    summary = {
-        "activeFiles": 0,
-        "pendingFiles": 0,
-        "expiredFiles": 0,
-        "deletedFiles": 0,  # Not implemented in this mock
-    }
-
-    for file_meta in user_files:
-        status = get_file_status(file_meta)
-
-        # The user dashboard only needs a summary of the file
-        serialized_files.append(
-            {
-                "id": file_meta["id"],
-                "fileName": file_meta.get("filename", "N/A"),
-                "status": status,
-                "createdAt": file_meta["createdAt"],
-                "shareToken": file_meta.get("shareToken"),
-            }
-        )
-
-        if status == "active":
-            summary["activeFiles"] += 1
-        elif status == "pending":
-            summary["pendingFiles"] += 1
-        elif status == "expired":
-            summary["expiredFiles"] += 1
-
-    # Mock pagination
-    total_files = len(serialized_files)
-    pagination = {
-        "currentPage": 1,
-        "totalPages": 1,
-        "totalFiles": total_files,
-        "limit": max(20, total_files),  # Mock limit
-    }
-
     return jsonify(
         {
-            "user": serialize_user(user),  # The basic User object
-            "files": serialized_files,
-            "pagination": pagination,
-            "summary": summary,
+            "user": serialize_user(user),
         }
     ), 200
 
@@ -622,13 +662,15 @@ def upload_file():
         "ownerEmail": owner_email,
         "isPublic": bool(is_public),
         "passwordProtected": bool(password),
-        "availableFrom": available_from.isoformat() + "Z" if available_from else None,
-        "availableTo": available_to.isoformat() + "Z" if available_to else None,
+        "availableFrom": available_from.isoformat() if available_from else None,
+        "availableTo": available_to.isoformat() if available_to else None,
         "sharedWith": shared_with,
         "shareLink": share_link,
-        "createdAt": datetime.utcnow().isoformat() + "Z",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
         "totpEnabled": bool(enable_totp),
     }
+
+    print(file_meta)
 
     # store metadata (not storing file bytes permanently in this mock)
     files[file_id] = file_meta

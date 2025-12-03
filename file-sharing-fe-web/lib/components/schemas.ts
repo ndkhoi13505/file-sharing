@@ -139,8 +139,11 @@ export interface FileInfoResponse {
 // =====================
 // user profile
 // =====================
-export interface UserProfileResponse {
+export interface UserResponse {
   user: User;
+}
+
+export interface UserFilesResponse {
   files: File[];
   pagination: {
     currentPage: number;

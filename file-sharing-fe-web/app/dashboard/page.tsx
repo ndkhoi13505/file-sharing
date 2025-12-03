@@ -3,16 +3,33 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { User, File as FileType, UserProfileResponse } from "@/lib/components/schemas";
+import { User, File as FileType, UserResponse, UserFilesResponse } from "@/lib/components/schemas";
 import { getUserProfile, disableTotp, changePassword } from "@/lib/api/auth";
-import { deleteFile } from "@/lib/api/file";
+import { deleteFile, getUserFiles } from "@/lib/api/file";
 import { ShieldCheck, ShieldOff, Loader, KeyRound, Trash2 } from "lucide-react";
 import { setCurrentUser } from "@/lib/api/helper";
 import { toast } from "sonner";
 import { ChangePasswordRequest } from "@/lib/components/schemas";
 
+type DashboardProfileResponse = {
+  user: User;
+  files: FileType[];
+  summary: {
+    activeFiles: number;
+    pendingFiles: number;
+    expiredFiles: number;
+    deletedFiles: number;
+  };
+  pagination: {
+    currentPage: number;
+    totalPages: number;
+    totalFiles: number;
+    limit: number;
+  };
+};
+
 export default function Dashboard() {
-  const [userProfile, setUserProfile] = useState<UserProfileResponse | null>(null);
+  const [userProfile, setUserProfile] = useState<DashboardProfileResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // TOTP Disable State
@@ -28,27 +45,56 @@ export default function Dashboard() {
   const [useTotpForPasswordChange, setUseTotpForPasswordChange] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
 
+  // New state for filtering, sorting, and pagination
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("createdAt");
+  const [sortOrder, setSortOrder] = useState("desc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pagination, setPagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    totalFiles: 0,
+    limit: 20,
+  });
+
   const router = useRouter();
 
   useEffect(() => {
-    const fetchProfile = async () => {
+    const fetchProfileAndFiles = async () => {
+      setIsLoading(true);
       try {
-        const profile = await getUserProfile();
-        setUserProfile(profile);
-        setCurrentUser(profile.user);
+        const userRes = await getUserProfile();
+        setCurrentUser(userRes.user);
+
+        const filesRes = await getUserFiles({
+          status: statusFilter,
+          page: currentPage,
+          limit: pagination.limit,
+          sortBy,
+          order: sortOrder,
+        });
+        
+        setUserProfile({
+          user: userRes.user,
+          files: filesRes.files,
+          summary: filesRes.summary,
+          pagination: filesRes.pagination,
+        });
+        setPagination(filesRes.pagination);
+
       } catch (err: any) {
         if (err.message.includes("Unauthorized")) {
           router.push("/login");
         } else {
-          setError("Failed to fetch user profile.");
+          setError("Failed to fetch dashboard data.");
         }
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchProfile();
-  }, [router]);
+    fetchProfileAndFiles();
+  }, [router, statusFilter, sortBy, sortOrder, currentPage, pagination.limit]);
 
   const handleDisableTotp = async () => {
     if (!totpCode) {
@@ -59,8 +105,18 @@ export default function Dashboard() {
     try {
       await disableTotp(totpCode);
       // Refresh profile to show updated TOTP status
-      const profile = await getUserProfile();
-      setUserProfile(profile);
+      const userRes = await getUserProfile();
+      setUserProfile((prev) => {
+        const base = prev ? { ...prev } : {
+          files: [],
+          summary: { activeFiles: 0, pendingFiles: 0, expiredFiles: 0, deletedFiles: 0 },
+          pagination: { currentPage: 1, totalPages: 1, totalFiles: 0, limit: 20 },
+        };
+        return {
+          ...base,
+          user: userRes.user,
+        };
+      });
       setShowTotpInput(false);
       setTotpCode("");
       toast.success("TOTP has been disabled successfully.");
@@ -76,18 +132,8 @@ export default function Dashboard() {
       try {
         await deleteFile(fileId);
         toast.success("File deleted successfully");
-        setUserProfile((prev) => {
-          if (!prev) return null;
-          const newFiles = prev.files.filter((file) => file.id !== fileId);
-          // Recalculate summary
-          const summary = {
-            activeFiles: newFiles.filter(f => f.status === 'active').length,
-            pendingFiles: newFiles.filter(f => f.status === 'pending').length,
-            expiredFiles: newFiles.filter(f => f.status === 'expired').length,
-            deletedFiles: prev.summary.deletedFiles + 1, // Or fetch summary again
-          };
-          return { ...prev, files: newFiles, summary };
-        });
+        // Re-fetch files and summary after deletion by triggering the useEffect
+        setCurrentPage(1);
       } catch (err: any) {
         toast.error(`Failed to delete file: ${err.message}`);
       }
@@ -150,7 +196,7 @@ export default function Dashboard() {
     return <div className="text-center text-red-500">{error}</div>;
   }
 
-  if (!userProfile) {
+  if (!userProfile || !userProfile.user) {
     return null; // or a fallback UI
   }
 
@@ -252,13 +298,50 @@ export default function Dashboard() {
             </div>
         </div>
 
+        <div className="flex justify-between items-center mb-4">
+          <div className="flex items-center gap-4">
+            <div>
+              <label htmlFor="status-filter" className="sr-only">Filter by status</label>
+              <select
+                id="status-filter"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+              >
+                <option value="all">All Statuses</option>
+                <option value="active">Active</option>
+                <option value="pending">Pending</option>
+                <option value="expired">Expired</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="sort-by" className="sr-only">Sort by</label>
+              <select
+                id="sort-by"
+                value={`${sortBy}-${sortOrder}`}
+                onChange={(e) => {
+                  const [newSortBy, newSortOrder] = e.target.value.split('-');
+                  setSortBy(newSortBy);
+                  setSortOrder(newSortOrder);
+                }}
+                className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
+              >
+                <option value="createdAt-desc">Newest First</option>
+                <option value="createdAt-asc">Oldest First</option>
+                <option value="fileName-asc">Name (A-Z)</option>
+                <option value="fileName-desc">Name (Z-A)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">File Name</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => { setSortBy("fileName"); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}}>File Name</th>
                 <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created At</th>
+                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer" onClick={() => { setSortBy("createdAt"); setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}}>Created At</th>
                 <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
@@ -295,6 +378,42 @@ export default function Dashboard() {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div className="mt-4 flex justify-between items-center">
+          <div>
+            <p className="text-sm text-gray-700">
+              Showing <span className="font-medium">{(currentPage - 1) * pagination.limit + 1}</span> to <span className="font-medium">{Math.min(currentPage * pagination.limit, pagination.totalFiles)}</span> of{' '}
+              <span className="font-medium">{pagination.totalFiles}</span> results
+            </p>
+          </div>
+          <div>
+            <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+              <button
+                onClick={() => setCurrentPage(currentPage - 1)}
+                disabled={currentPage === 1}
+                className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:bg-gray-100"
+              >
+                Previous
+              </button>
+              {Array.from({ length: pagination.totalPages }, (_, i) => i + 1).map((page) => (
+                <button
+                  key={page}
+                  onClick={() => setCurrentPage(page)}
+                  className={`relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium ${currentPage === page ? 'text-indigo-600 bg-indigo-50' : 'text-gray-700 hover:bg-gray-50'}`}
+                >
+                  {page}
+                </button>
+              ))}
+              <button
+                onClick={() => setCurrentPage(currentPage + 1)}
+                disabled={currentPage === pagination.totalPages}
+                className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:bg-gray-100"
+              >
+                Next
+              </button>
+            </nav>
+          </div>
         </div>
       </div>
 

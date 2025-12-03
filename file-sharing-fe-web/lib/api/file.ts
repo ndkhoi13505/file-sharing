@@ -1,5 +1,5 @@
 import { uploadClient, adminClient } from "@/lib/api/client";
-import type { FileUploadResponse, UploadedFileSummary, TOTPSetup } from "@/lib/components/schemas";
+import type { FileUploadResponse, UploadedFileSummary, TOTPSetup, UserFilesResponse } from "@/lib/components/schemas";
 
 export class ApiError extends Error {
   status: number;
@@ -128,10 +128,20 @@ async function deleteFile(fileId: string): Promise<any> {
     return adminClient.delete(`/files/${fileId}`);
 }
 
+async function getUserFiles(params?: {
+  status?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  order?: string;
+}): Promise<UserFilesResponse> {
+  return adminClient.get<UserFilesResponse>("/files/my", { params });
+}
+
 export const fileApi = {
   upload: uploadFile,
   delete: deleteFile,
+  getUserFiles: getUserFiles,
 };
 
-export { uploadFile, deleteFile };
-
+export { uploadFile, deleteFile, getUserFiles };
