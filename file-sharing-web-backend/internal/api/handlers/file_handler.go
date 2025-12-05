@@ -40,12 +40,27 @@ func (fh *FileHandler) UploadFile(ctx *gin.Context) {
 		return
 	}
 
+	if req.Password != nil {
+		if len(*req.Password) < 6 {
+			utils.ResponseMsg(utils.ErrCodeBadRequest, "Password must be at least 6 characters long").Export(ctx)
+			return
+		}
+	}
+
 	var userID *string
 	if val, exists := ctx.Get("userID"); exists && val != "" {
 		strVal := val.(string)
 		userID = &strVal
 	} else {
 		userID = nil
+	}
+
+	if userID == nil && !req.IsPublic {
+		ctx.JSON(http.StatusUnauthorized, gin.H{
+			"error":   "Unauthorized",
+			"message": "Bearer token is required for authenticated uploads",
+		})
+		return
 	}
 
 	uploadedFile, berr := fh.file_service.UploadFile(ctx, fileHeader, &req, userID)
